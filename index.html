@@ -446,7 +446,7 @@ function saveExpense(){
   const categoria = document.getElementById('fCategoria').value;
   const gasto = document.getElementById('fGasto').value.trim();
   const fecha = document.getElementById('fFecha').value;
-  const valorRaw = document.getElementById('fValor').value.replace(/\D/g, '');
+  const valorRaw = document.getElementById('fValor').value.replace(/[^\d]/g, '');
   const pagado = getToggle('tPagado');
   const fechaPago = pagado === 'SI' ? document.getElementById('fFechaPago').value : '';
   const pagador = getToggle('tPagador');
@@ -466,7 +466,7 @@ function saveExpense(){
     categoria: categoria,
     gasto: gasto,
     fecha: isoToDMY(fecha),
-    valor: Number(valorRaw).toLocaleString('es-CL'),
+    valor: valorRaw,
     pagado: pagado,
     fechaPago: fechaPago ? isoToDMY(fechaPago) : '',
     pagador: pagador
