@@ -25,8 +25,7 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
 .hidden{display:none !important}
 
 /* HEADER */
-.header{display:flex;align-items:center;justify-content:space-between;padding:14px 0 16px;
-  position:sticky;top:0;background:var(--bg);z-index:5;margin:0 -16px 0;padding-left:16px;padding-right:16px}
+.header{display:flex;align-items:center;justify-content:space-between;padding:14px 0 16px}
 .header h1{margin:0;font-size:20px;font-weight:600;letter-spacing:.3px}
 .header .back{background:var(--surface);border-radius:12px;padding:8px 14px;font-size:14px}
 .header .back:hover{background:var(--surface2)}
@@ -143,6 +142,8 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
 .client-total .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
 .client-total .v{font-size:18px;font-weight:700;color:var(--gold)}
 .expense-item{padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+.expense-item.clickable{cursor:pointer;border-radius:8px;padding:10px 8px;margin:0 -8px;transition:background .1s}
+.expense-item.clickable:hover,.expense-item.clickable:active{background:var(--surface2)}
 .expense-item:last-child{border-bottom:none}
 .expense-item .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .expense-item .desc{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -217,8 +218,8 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
   <!-- NUEVO GASTO -->
   <div id="newScreen" class="hidden">
     <div class="header">
-      <button class="back" onclick="goto('home')">← Volver</button>
-      <h1>Nuevo Gasto</h1>
+      <button class="back" onclick="backFromForm()">← Volver</button>
+      <h1 id="newScreenTitle">Nuevo Gasto</h1>
       <div style="width:60px"></div>
     </div>
     <div class="form">
@@ -364,6 +365,8 @@ let expenses = [];
 let clientes = [];
 let selectedMonth = null; // 'YYYY-MM'
 let scope = 'OFICINA'; // 'OFICINA' | 'CLIENTE'
+let editingRow = null; // null = nuevo gasto, número = editando esa fila
+let currentDetailRenderer = null; // función para re-dibujar el detalle abierto tras editar
 
 // ============ INIT ============
 window.addEventListener('DOMContentLoaded', () => {
@@ -450,6 +453,8 @@ function todayISO(){
 }
 function prefillForm(){
   const t = todayISO();
+  editingRow = null;
+  document.getElementById('newScreenTitle').textContent = 'Nuevo Gasto';
   document.getElementById('fCliente').value = '';
   document.getElementById('fCategoria').value = '';
   document.getElementById('fGasto').value = '';
@@ -464,6 +469,47 @@ function prefillForm(){
   btn.disabled = false;
   btn.textContent = 'Guardar gasto';
 }
+
+function dmyToISO(dmy){
+  if (!dmy) return '';
+  const p = dmy.split('/');
+  if (p.length !== 3) return '';
+  return p[2] + '-' + p[1].padStart(2, '0') + '-' + p[0].padStart(2, '0');
+}
+
+function openEditExpense(row){
+  const e = expenses.find(x => x.row === row);
+  if (!e) { toast('Actualiza la lista para editar este gasto', 'error'); return; }
+  editingRow = row;
+  document.getElementById('newScreenTitle').textContent = 'Editar Gasto';
+  document.getElementById('fCliente').value = e.cliente || '';
+  document.getElementById('fCategoria').value = e.categoria || '';
+  document.getElementById('fGasto').value = e.gasto || '';
+  document.getElementById('fFecha').value = dmyToISO(e.fecha) || todayISO();
+  document.getElementById('fValor').value = e.valor ? Number(e.valor).toLocaleString('es-CL') : '';
+  const pagadorVal = (e.pagador || '').toUpperCase() === 'CLIENTE' ? 'CLIENTE' : 'OFICINA';
+  setupToggle('tPagador', pagadorVal);
+  const pagadoVal = (e.pagado || '').toUpperCase() === 'NO' ? 'NO' : 'SI';
+  setupToggle('tPagado', pagadoVal, v => {
+    document.getElementById('fFechaPagoWrap').style.display = v === 'NO' ? 'none' : '';
+  });
+  document.getElementById('fFechaPagoWrap').style.display = pagadoVal === 'NO' ? 'none' : '';
+  document.getElementById('fFechaPago').value = dmyToISO(e.fechaPago) || todayISO();
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = false;
+  btn.textContent = 'Guardar cambios';
+  document.getElementById('clienteList').classList.add('hidden');
+  showOnly('new');
+}
+
+function backFromForm(){
+  if (editingRow !== null) {
+    editingRow = null;
+    if (currentDetailRenderer) { currentDetailRenderer(); return; }
+  }
+  goto('home');
+}
+
 function setupForm(){
   // (placeholder - actual setup in DOMContentLoaded)
 }
@@ -522,12 +568,13 @@ function saveExpense(){
   if (!fecha) return toast('Falta la fecha', 'error');
   if (!valorRaw) return toast('Falta el valor', 'error');
 
+  const isEdit = editingRow !== null;
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="loader"></span> Guardando...';
 
-  const params = new URLSearchParams({
-    action: 'add',
+  const paramsObj = {
+    action: isEdit ? 'update' : 'add',
     cliente: cliente,
     categoria: categoria,
     gasto: gasto,
@@ -536,7 +583,9 @@ function saveExpense(){
     pagado: pagado,
     fechaPago: fechaPago ? isoToDMY(fechaPago) : '',
     pagador: pagador
-  });
+  };
+  if (isEdit) paramsObj.row = editingRow;
+  const params = new URLSearchParams(paramsObj);
 
   fetch(WEBAPP_URL, {
     method: 'POST',
@@ -544,21 +593,39 @@ function saveExpense(){
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.toString()
   }).then(() => {
-    toast('Gasto guardado ✓', 'ok');
-    // add optimistically
-    expenses.push({
-      cliente: cliente, categoria: categoria, gasto: gasto,
-      fecha: isoToDMY(fecha), valor: Number(valorRaw),
-      pagado: pagado, fechaPago: fechaPago ? isoToDMY(fechaPago) : '',
-      pagador: pagador
-    });
-    if (!clientes.includes(cliente)) clientes.push(cliente);
-    setTimeout(() => goto('home'), 800);
+    if (isEdit) {
+      toast('Gasto actualizado ✓', 'ok');
+      const idx = expenses.findIndex(e => e.row === editingRow);
+      if (idx !== -1) {
+        expenses[idx] = {
+          row: editingRow, cliente: cliente, categoria: categoria, gasto: gasto,
+          fecha: isoToDMY(fecha), valor: Number(valorRaw),
+          pagado: pagado, fechaPago: fechaPago ? isoToDMY(fechaPago) : '',
+          pagador: pagador
+        };
+      }
+      if (!clientes.includes(cliente)) clientes.push(cliente);
+      const renderer = currentDetailRenderer;
+      editingRow = null;
+      setTimeout(() => {
+        if (renderer) renderer(); else goto('home');
+      }, 700);
+    } else {
+      toast('Gasto guardado ✓', 'ok');
+      expenses.push({
+        cliente: cliente, categoria: categoria, gasto: gasto,
+        fecha: isoToDMY(fecha), valor: Number(valorRaw),
+        pagado: pagado, fechaPago: fechaPago ? isoToDMY(fechaPago) : '',
+        pagador: pagador
+      });
+      if (!clientes.includes(cliente)) clientes.push(cliente);
+      setTimeout(() => goto('home'), 800);
+    }
   }).catch(err => {
     console.error(err);
     toast('Error al guardar', 'error');
     btn.disabled = false;
-    btn.textContent = 'Guardar gasto';
+    btn.textContent = isEdit ? 'Guardar cambios' : 'Guardar gasto';
   });
 }
 
@@ -759,7 +826,9 @@ function renderDetailList(list, opts){
   });
   const items = sorted.map(e => {
     const pagado = (e.pagado || '').toUpperCase() === 'SI';
-    return '<div class="expense-item">' +
+    const editable = e.row != null;
+    const clickAttr = editable ? ' onclick="openEditExpense(' + e.row + ')"' : '';
+    return '<div class="expense-item' + (editable ? ' clickable' : '') + '"' + clickAttr + '>' +
       '<div class="top">' +
         '<div class="desc">' + escapeHtml(e.gasto || '(sin descripción)') + '</div>' +
         '<div class="val ' + (pagado ? '' : 'pending') + '">' + fmt(e.valor || 0) + '</div>' +
@@ -776,12 +845,14 @@ function renderDetailList(list, opts){
 }
 
 function openOficinaDetail(){
+  currentDetailRenderer = openOficinaDetail;
   const list = expensesOfMonth(selectedMonth, 'OFICINA');
   renderDetailList(list, { title: 'Oficina · ' + monthLabel(selectedMonth), showPending: false });
   openSubScreen('detailScreen', 'dash');
 }
 
 function openCategoryDetail(cat){
+  currentDetailRenderer = () => openCategoryDetail(cat);
   const list = expensesOfMonth(selectedMonth, scope).filter(e =>
     (e.categoria || 'SIN CATEGORIA') === cat
   );
@@ -793,6 +864,7 @@ function openCategoryDetail(cat){
 }
 
 function openClientDetail(clientName, origin){
+  currentDetailRenderer = () => openClientDetail(clientName, origin);
   const list = expenses.filter(e => (e.cliente || '').toUpperCase() === clientName.toUpperCase());
   renderDetailList(list, { title: clientName, showPending: true });
   openSubScreen('detailScreen', origin || 'dash');
