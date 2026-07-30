@@ -95,6 +95,27 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
 .stat-card .v{font-size:20px;font-weight:700;margin-top:4px}
 .stat-card.of{border-left:3px solid var(--blue)}
 .stat-card.cl{border-left:3px solid var(--gold)}
+.stat-card.clickable{width:100%;text-align:left;cursor:pointer;transition:transform .1s}
+.stat-card.clickable:active{transform:scale(.97)}
+.stat-card.clickable:hover{background:var(--surface2)}
+
+.legend-item.clickable{cursor:pointer;border-radius:8px;padding:6px 8px;margin:0 -8px;transition:background .1s}
+.legend-item.clickable:hover,.legend-item.clickable:active{background:var(--surface2)}
+
+.client-row{background:var(--surface);border-radius:14px;padding:16px;margin-bottom:10px;
+  width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;
+  border-left:3px solid var(--gold);cursor:pointer;transition:background .1s}
+.client-row:hover,.client-row:active{background:var(--surface2)}
+.client-row .name{font-weight:600;font-size:15px}
+.client-row .count{color:var(--muted);font-size:12px;margin-top:2px}
+.client-row .amt{font-weight:700;font-size:16px;color:var(--gold);white-space:nowrap}
+
+.detail-summary{background:var(--surface);border-radius:16px;padding:16px;margin-bottom:16px;
+  display:flex;gap:12px}
+.detail-summary .box{flex:1;text-align:center}
+.detail-summary .box .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.detail-summary .box .v{font-size:18px;font-weight:700;margin-top:4px}
+.detail-list-card{background:var(--surface);border-radius:16px;padding:16px}
 
 .chart-card{background:var(--surface);border-radius:20px;padding:20px;margin-bottom:16px}
 .chart-card h3{margin:0 0 16px;font-size:14px;color:var(--muted);text-transform:uppercase;
@@ -275,14 +296,14 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
       <div class="chips" id="monthChips"></div>
 
       <div class="stats">
-        <div class="stat-card of">
+        <button type="button" class="stat-card of clickable" onclick="openOficinaDetail()">
           <div class="l">Oficina</div>
           <div class="v" id="statOf">$0</div>
-        </div>
-        <div class="stat-card cl">
+        </button>
+        <button type="button" class="stat-card cl clickable" onclick="openClientsScreen()">
           <div class="l">Cliente</div>
           <div class="v" id="statCl">$0</div>
-        </div>
+        </button>
       </div>
 
       <div class="chart-card">
@@ -300,6 +321,27 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
         <div id="searchResults" class="search-results"></div>
       </div>
     </div>
+  </div>
+
+  <!-- CLIENTES (consolidado por cliente del mes) -->
+  <div id="clientsScreen" class="hidden">
+    <div class="header">
+      <button class="back" onclick="closeSubScreen('clientsScreen')">← Volver</button>
+      <h1>Clientes</h1>
+      <div style="width:60px"></div>
+    </div>
+    <div id="clientsList"></div>
+  </div>
+
+  <!-- DETALLE (genérico: oficina / categoría / cliente) -->
+  <div id="detailScreen" class="hidden">
+    <div class="header">
+      <button class="back" id="detailBack" onclick="closeSubScreen('detailScreen')">← Volver</button>
+      <h1 id="detailTitle">Detalle</h1>
+      <div style="width:60px"></div>
+    </div>
+    <div id="detailSummary"></div>
+    <div id="detailList"></div>
   </div>
 
   <div id="toast" class="toast"></div>
@@ -377,6 +419,15 @@ function goto(where){
   if (where === 'dash') loadDashboard();
 }
 
+function openSubScreen(id){
+  document.getElementById(id).classList.remove('hidden');
+  window.scrollTo(0, 0);
+}
+function closeSubScreen(id){
+  document.getElementById(id).classList.add('hidden');
+  window.scrollTo(0, 0);
+}
+
 // ============ FORM ============
 function todayISO(){
   const d = new Date();
@@ -397,6 +448,9 @@ function prefillForm(){
   setupToggle('tPagado', 'SI');
   document.getElementById('fFechaPagoWrap').style.display = '';
   document.getElementById('clienteList').classList.add('hidden');
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = false;
+  btn.textContent = 'Guardar gasto';
 }
 function setupForm(){
   // (placeholder - actual setup in DOMContentLoaded)
@@ -643,7 +697,8 @@ function renderChart(){
   const legend = entries.map(([cat, val]) => {
     const pct = ((val / total) * 100).toFixed(1);
     const color = COLORS[cat] || '#94a3b8';
-    return '<div class="legend-item">' +
+    return '<div class="legend-item clickable" onclick="openCategoryDetail(\'' +
+      cat.replace(/'/g, "\\'") + '\')">' +
       '<div class="lft"><span class="dot" style="background:' + color + '"></span>' + cat + '</div>' +
       '<div><span class="v">' + fmt(val) + '</span><span class="p">' + pct + '%</span></div>' +
       '</div>';
@@ -655,6 +710,116 @@ function renderChart(){
     '<div class="legend">' + legend + '</div>';
 }
 
+// ============ DETAIL SCREENS (drill-down) ============
+
+function renderDetailList(list, opts){
+  opts = opts || {};
+  const title = opts.title || 'Detalle';
+  document.getElementById('detailTitle').textContent = title;
+
+  const total = list.reduce((s, e) => s + (e.valor || 0), 0);
+  const summaryEl = document.getElementById('detailSummary');
+  if (opts.showPending) {
+    const pendiente = list.filter(e => (e.pagado || '').toUpperCase() !== 'SI')
+      .reduce((s, e) => s + (e.valor || 0), 0);
+    summaryEl.innerHTML = '<div class="detail-summary">' +
+      '<div class="box"><div class="l">Total</div><div class="v">' + fmt(total) + '</div></div>' +
+      '<div class="box"><div class="l">Pendiente</div><div class="v" style="color:var(--red)">' +
+      fmt(pendiente) + '</div></div>' +
+      '</div>';
+  } else {
+    summaryEl.innerHTML = '<div class="detail-summary">' +
+      '<div class="box"><div class="l">Total</div><div class="v" style="color:var(--gold)">' +
+      fmt(total) + '</div></div>' +
+      '<div class="box"><div class="l">Gastos</div><div class="v">' + list.length + '</div></div>' +
+      '</div>';
+  }
+
+  const listEl = document.getElementById('detailList');
+  if (list.length === 0) {
+    listEl.innerHTML = '<div class="empty">Sin gastos</div>';
+    return;
+  }
+  const sorted = list.slice().sort((a, b) => {
+    const da = dmyToDate(a.fecha), db = dmyToDate(b.fecha);
+    if (!da) return 1; if (!db) return -1;
+    return db - da;
+  });
+  const items = sorted.map(e => {
+    const pagado = (e.pagado || '').toUpperCase() === 'SI';
+    return '<div class="expense-item">' +
+      '<div class="top">' +
+        '<div class="desc">' + escapeHtml(e.gasto || '(sin descripción)') + '</div>' +
+        '<div class="val ' + (pagado ? '' : 'pending') + '">' + fmt(e.valor || 0) + '</div>' +
+      '</div>' +
+      '<div class="bot">' +
+        '<div>' + escapeHtml(e.cliente || '') + (e.categoria ? ' · ' + escapeHtml(e.categoria) : '') +
+          ' · ' + (e.fecha || '') + '</div>' +
+        '<div><span class="badge ' + (pagado ? 'pagado' : 'pendiente') + '">' +
+          (pagado ? 'PAGADO' : 'PENDIENTE') + '</span></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  listEl.innerHTML = '<div class="detail-list-card">' + items + '</div>';
+}
+
+function openOficinaDetail(){
+  const list = expensesOfMonth(selectedMonth, 'OFICINA');
+  renderDetailList(list, { title: 'Oficina · ' + monthLabel(selectedMonth), showPending: false });
+  openSubScreen('detailScreen');
+}
+
+function openCategoryDetail(cat){
+  const list = expensesOfMonth(selectedMonth, scope).filter(e =>
+    (e.categoria || 'SIN CATEGORIA') === cat
+  );
+  renderDetailList(list, {
+    title: cat + ' · ' + (scope === 'OFICINA' ? 'Oficina' : 'Clientes') + ' · ' + monthLabel(selectedMonth),
+    showPending: scope === 'CLIENTE'
+  });
+  openSubScreen('detailScreen');
+}
+
+function openClientDetail(clientName){
+  const list = expenses.filter(e => (e.cliente || '').toUpperCase() === clientName.toUpperCase());
+  renderDetailList(list, { title: clientName, showPending: true });
+  openSubScreen('detailScreen');
+}
+
+function monthLabel(key){
+  const p = (key || '').split('-');
+  if (p.length !== 2) return key || '';
+  const d = new Date(parseInt(p[0]), parseInt(p[1]) - 1, 1);
+  return d.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
+}
+
+function openClientsScreen(){
+  const list = expensesOfMonth(selectedMonth, 'CLIENTE');
+  const byClient = {};
+  list.forEach(e => {
+    const c = (e.cliente || '').toUpperCase();
+    if (!byClient[c]) byClient[c] = { total: 0, count: 0 };
+    byClient[c].total += (e.valor || 0);
+    byClient[c].count += 1;
+  });
+  const entries = Object.entries(byClient).sort((a, b) => b[1].total - a[1].total);
+  const cont = document.getElementById('clientsList');
+  if (entries.length === 0) {
+    cont.innerHTML = '<div class="empty">Sin gastos de clientes en ' + monthLabel(selectedMonth) + '</div>';
+  } else {
+    cont.innerHTML = entries.map(([name, d]) =>
+      '<button type="button" class="client-row" onclick="openClientDetail(\'' +
+        name.replace(/'/g, "\\'") + '\')">' +
+        '<div><div class="name">' + escapeHtml(name) + '</div>' +
+        '<div class="count">' + d.count + ' gasto' + (d.count === 1 ? '' : 's') + ' · ' +
+        monthLabel(selectedMonth) + '</div></div>' +
+        '<div class="amt">' + fmt(d.total) + '</div>' +
+      '</button>'
+    ).join('');
+  }
+  openSubScreen('clientsScreen');
+}
+
 function renderSearch(){
   const q = document.getElementById('searchInput').value.trim().toUpperCase();
   const cont = document.getElementById('searchResults');
@@ -664,38 +829,26 @@ function renderSearch(){
     cont.innerHTML = '<div class="empty" style="padding:20px 0">Sin resultados</div>';
     return;
   }
-  // Ordenar por fecha desc
-  list.sort((a, b) => {
-    const da = dmyToDate(a.fecha), db = dmyToDate(b.fecha);
-    if (!da) return 1; if (!db) return -1;
-    return db - da;
+  const byClient = {};
+  list.forEach(e => {
+    const c = (e.cliente || '').toUpperCase();
+    if (!byClient[c]) byClient[c] = { total: 0, count: 0, pendiente: 0 };
+    byClient[c].total += (e.valor || 0);
+    byClient[c].count += 1;
+    if ((e.pagado || '').toUpperCase() !== 'SI') byClient[c].pendiente += (e.valor || 0);
   });
-  const total = list.reduce((s, e) => s + (e.valor || 0), 0);
-  const pendiente = list.filter(e => (e.pagado || '').toUpperCase() !== 'SI')
-    .reduce((s, e) => s + (e.valor || 0), 0);
+  const entries = Object.entries(byClient).sort((a, b) => b[1].total - a[1].total);
 
-  let html = '<div class="client-total">' +
-    '<div><div class="l">Total gastos</div><div class="v">' + fmt(total) + '</div></div>' +
-    '<div style="text-align:right"><div class="l">Pendiente</div>' +
-    '<div class="v" style="color:var(--red)">' + fmt(pendiente) + '</div></div>' +
-    '</div>';
-
-  html += list.map(e => {
-    const pagado = (e.pagado || '').toUpperCase() === 'SI';
-    return '<div class="expense-item">' +
-      '<div class="top">' +
-        '<div class="desc">' + escapeHtml(e.gasto || '(sin descripción)') + '</div>' +
-        '<div class="val ' + (pagado ? '' : 'pending') + '">' + fmt(e.valor || 0) + '</div>' +
-      '</div>' +
-      '<div class="bot">' +
-        '<div>' + escapeHtml(e.cliente || '') + ' · ' + (e.fecha || '') + '</div>' +
-        '<div><span class="badge ' + (pagado ? 'pagado' : 'pendiente') + '">' +
-          (pagado ? 'PAGADO' : 'PENDIENTE') + '</span></div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-
-  cont.innerHTML = html;
+  cont.innerHTML = entries.map(([name, d]) =>
+    '<button type="button" class="client-row" onclick="openClientDetail(\'' +
+      name.replace(/'/g, "\\'") + '\')">' +
+      '<div><div class="name">' + escapeHtml(name) + '</div>' +
+      '<div class="count">' + d.count + ' gasto' + (d.count === 1 ? '' : 's') +
+      (d.pendiente > 0 ? ' · <span style="color:var(--red)">pendiente ' + fmt(d.pendiente) + '</span>' : '') +
+      '</div></div>' +
+      '<div class="amt">' + fmt(d.total) + '</div>' +
+    '</button>'
+  ).join('');
 }
 
 // ============ HELPERS ============
