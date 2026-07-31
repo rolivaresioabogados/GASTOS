@@ -217,6 +217,13 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
             <span class="d">Análisis mensual y por cliente</span>
           </div>
         </button>
+        <button class="home-btn" onclick="goto('reembolsos')">
+          <div class="icon">🏦</div>
+          <div class="txt">
+            <span class="t">Reembolsos Bancos</span>
+            <span class="d">Pagos y reembolsos pendientes</span>
+          </div>
+        </button>
       </div>
     </div>
   </div>
@@ -353,6 +360,54 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
     <div id="detailList"></div>
   </div>
 
+  <!-- REEMBOLSOS BANCOS: selector de banco -->
+  <div id="reembolsosScreen" class="hidden">
+    <div class="header">
+      <button class="back" onclick="goto('home')">← Volver</button>
+      <h1>Reembolsos Bancos</h1>
+      <div style="width:60px"></div>
+    </div>
+    <div id="reembolsosLoading" class="loading-full">
+      <div class="spin"></div>
+      <div>Cargando reembolsos...</div>
+    </div>
+    <div id="reembolsosContent" class="hidden home-actions">
+      <button class="home-btn" onclick="openBancoResumen('BS')">
+        <div class="icon">🏦</div>
+        <div class="txt">
+          <span class="t">Banco Santander</span>
+          <span class="d">Reembolsos BS</span>
+        </div>
+      </button>
+      <button class="home-btn" onclick="openBancoResumen('BCH')">
+        <div class="icon">🏦</div>
+        <div class="txt">
+          <span class="t">Banco de Chile</span>
+          <span class="d">Reembolsos BCH</span>
+        </div>
+      </button>
+    </div>
+  </div>
+
+  <!-- REEMBOLSOS BANCOS: resumen pagado/pendiente de un banco -->
+  <div id="reembancoResumenScreen" class="hidden">
+    <div class="header">
+      <button class="back" onclick="closeSubScreen('reembancoResumenScreen')">← Volver</button>
+      <h1 id="reembancoResumenTitle">Banco</h1>
+      <div style="width:60px"></div>
+    </div>
+    <div class="stats">
+      <button type="button" class="stat-card of clickable" onclick="openReembolsoDetail('PAGADO')">
+        <div class="l">Pagados</div>
+        <div class="v" id="reembancoPagadoTotal">$0</div>
+      </button>
+      <button type="button" class="stat-card cl clickable" onclick="openReembolsoDetail('PENDIENTE')">
+        <div class="l">Pendientes</div>
+        <div class="v" id="reembancoPendienteTotal">$0</div>
+      </button>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
 </div>
 
@@ -420,8 +475,10 @@ function showHome(){
 }
 
 // ============ NAVIGATION ============
-const ALL_SCREENS = ['home', 'new', 'dash', 'clients', 'detail'];
+const ALL_SCREENS = ['home', 'new', 'dash', 'clients', 'detail', 'reembolsos', 'reembancoResumen'];
 let detailReturnTo = 'dash';
+let selectedBanco = null;
+let reembolsosBancoData = [];
 
 function showOnly(where){
   ALL_SCREENS.forEach(s => {
@@ -435,6 +492,7 @@ function goto(where){
   showOnly(where);
   if (where === 'new') prefillForm();
   if (where === 'dash') loadDashboard();
+  if (where === 'reembolsos') loadReembolsos();
 }
 
 function openSubScreen(id, returnTo){
@@ -444,6 +502,8 @@ function openSubScreen(id, returnTo){
 function closeSubScreen(id){
   if (id === 'detailScreen') {
     showOnly(detailReturnTo);
+  } else if (id === 'reembancoResumenScreen') {
+    showOnly('reembolsos');
   } else {
     showOnly('dash');
   }
@@ -656,6 +716,90 @@ function dmyToDate(dmy){
 }
 
 // ============ DASHBOARD ============
+function loadReembolsos(){
+  document.getElementById('reembolsosLoading').classList.remove('hidden');
+  document.getElementById('reembolsosContent').classList.add('hidden');
+
+  const cb = 'cbr_' + Date.now();
+  window[cb] = function(data){
+    delete window[cb];
+    document.head.removeChild(script);
+    if (!data || !data.ok) {
+      document.getElementById('reembolsosLoading').innerHTML =
+        '<div style="color:var(--red)">No se pudieron cargar los reembolsos.</div>';
+      return;
+    }
+    reembolsosBancoData = data.reembolsos || [];
+    document.getElementById('reembolsosLoading').classList.add('hidden');
+    document.getElementById('reembolsosContent').classList.remove('hidden');
+  };
+  const script = document.createElement('script');
+  script.src = WEBAPP_URL + '?action=reembolsosBanco&callback=' + cb + '&t=' + Date.now();
+  script.onerror = () => {
+    document.getElementById('reembolsosLoading').innerHTML =
+      '<div style="color:var(--red)">No se pudieron cargar los reembolsos.</div>';
+  };
+  document.head.appendChild(script);
+}
+
+function openBancoResumen(banco){
+  selectedBanco = banco;
+  const list = reembolsosBancoData.filter(r => r.banco === banco);
+  const pagados = list.filter(r => r.fechaReembolso);
+  const pendientes = list.filter(r => !r.fechaReembolso);
+  const totalPagado = pagados.reduce((s, r) => s + (r.monto || 0), 0);
+  const totalPendiente = pendientes.reduce((s, r) => s + (r.monto || 0), 0);
+
+  document.getElementById('reembancoResumenTitle').textContent =
+    banco === 'BS' ? 'Banco Santander' : 'Banco de Chile';
+  document.getElementById('reembancoPagadoTotal').textContent = fmt(totalPagado);
+  document.getElementById('reembancoPendienteTotal').textContent = fmt(totalPendiente);
+  showOnly('reembancoResumen');
+}
+
+function openReembolsoDetail(estado){
+  const list = reembolsosBancoData.filter(r =>
+    r.banco === selectedBanco && (estado === 'PAGADO' ? !!r.fechaReembolso : !r.fechaReembolso)
+  );
+  const bancoLabel = selectedBanco === 'BS' ? 'Banco Santander' : 'Banco de Chile';
+  const title = bancoLabel + ' · ' + (estado === 'PAGADO' ? 'Pagados' : 'Pendientes');
+
+  document.getElementById('detailTitle').textContent = title;
+  const total = list.reduce((s, r) => s + (r.monto || 0), 0);
+  document.getElementById('detailSummary').innerHTML =
+    '<div class="detail-summary">' +
+      '<div class="box"><div class="l">Total</div><div class="v" style="color:var(--gold)">' +
+      fmt(total) + '</div></div>' +
+      '<div class="box"><div class="l">Registros</div><div class="v">' + list.length + '</div></div>' +
+    '</div>';
+
+  const listEl = document.getElementById('detailList');
+  if (list.length === 0) {
+    listEl.innerHTML = '<div class="empty">Sin registros</div>';
+  } else {
+    const sorted = list.slice().sort((a, b) => {
+      const da = dmyToDate(a.fecha), db = dmyToDate(b.fecha);
+      if (!da) return 1; if (!db) return -1;
+      return db - da;
+    });
+    listEl.innerHTML = '<div class="detail-list-card">' + sorted.map(r => {
+      const reembolsado = !!r.fechaReembolso;
+      return '<div class="expense-item">' +
+        '<div class="top">' +
+          '<div class="desc">Pagado ' + (r.fecha || '') + '</div>' +
+          '<div class="val ' + (reembolsado ? '' : 'pending') + '">' + fmt(r.monto || 0) + '</div>' +
+        '</div>' +
+        '<div class="bot">' +
+          '<div>' + (reembolsado ? 'Reembolsado ' + r.fechaReembolso : 'Sin reembolsar') + '</div>' +
+          '<div><span class="badge ' + (reembolsado ? 'pagado' : 'pendiente') + '">' +
+            (reembolsado ? 'REEMBOLSADO' : 'PENDIENTE') + '</span></div>' +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+  openSubScreen('detailScreen', 'reembancoResumen');
+}
+
 function loadDashboard(){
   document.getElementById('dashLoading').classList.remove('hidden');
   document.getElementById('dashContent').classList.add('hidden');
