@@ -97,6 +97,10 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
 .chip.active{background:var(--gold);color:#0f172a;border-color:var(--gold)}
 
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stats.stats3{grid-template-columns:1fr 1fr 1fr}
+.stats.stats3 .stat-card{padding:10px}
+.stats.stats3 .stat-card .v{font-size:15px}
+.stats.stats3 .stat-card .l{font-size:10px}
 .stat-card{background:var(--surface);border-radius:14px;padding:14px}
 .stat-card .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
 .stat-card .v{font-size:20px;font-weight:700;margin-top:4px}
@@ -200,7 +204,7 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
     <div class="home">
       <div class="home-title">
         <div class="brand">IO ABOGADOS</div>
-        <div class="sub">Sistema de gastos</div>
+        <div class="sub">GASTOS Y VENTAS</div>
       </div>
       <div class="home-actions">
         <button class="home-btn" onclick="goto('new')">
@@ -213,7 +217,7 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
         <button class="home-btn" onclick="goto('dash')">
           <div class="icon">📊</div>
           <div class="txt">
-            <span class="t">Ver Consolidado</span>
+            <span class="t">Consolidado Gastos</span>
             <span class="d">Análisis mensual y por cliente</span>
           </div>
         </button>
@@ -437,9 +441,14 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
       <div>Cargando ventas...</div>
     </div>
     <div id="ventasContent" class="hidden">
+      <div class="chips" id="ventasEmisorChips"></div>
       <div class="chips" id="ventasMonthChips"></div>
 
-      <div class="stats">
+      <div class="stats stats3">
+        <button type="button" class="stat-card clickable" style="border-left:3px solid var(--green)" onclick="openVentasDetail('TODAS')">
+          <div class="l">Emitidas</div>
+          <div class="v" id="ventasEmitidasTotal">$0</div>
+        </button>
         <button type="button" class="stat-card of clickable" onclick="openVentasDetail('PAGADA')">
           <div class="l">Pagadas</div>
           <div class="v" id="ventasPagadoTotal">$0</div>
@@ -448,6 +457,12 @@ input:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px}
           <div class="l">Pendientes</div>
           <div class="v" id="ventasPendienteTotal">$0</div>
         </button>
+      </div>
+
+      <div class="search-card">
+        <h3>Buscar por cliente</h3>
+        <input type="text" id="ventasSearchInput" placeholder="Escribe nombre del cliente..." autocomplete="off">
+        <div id="ventasSearchResults" class="search-results"></div>
       </div>
 
       <div class="chart-card">
@@ -497,6 +512,7 @@ window.addEventListener('DOMContentLoaded', () => {
     updateStats();
   });
   document.getElementById('searchInput').addEventListener('input', renderSearch);
+  document.getElementById('ventasSearchInput').addEventListener('input', renderVentasSearch);
   document.getElementById('fCliente').addEventListener('input', onClienteInput);
   document.getElementById('fCliente').addEventListener('blur', () => {
     setTimeout(() => document.getElementById('clienteList').classList.add('hidden'), 200);
@@ -531,6 +547,7 @@ let reembolsosBancoData = [];
 let currentReembolsoList = [];
 let ventasData = [];
 let ventasSelectedMonths = new Set();
+let ventasSelectedEmisores = new Set();
 let currentVentasList = [];
 
 function showOnly(where){
@@ -903,8 +920,10 @@ function loadVentas(){
     }
     ventasData = data.ventas || [];
     ventasSelectedMonths = new Set();
+    ventasSelectedEmisores = new Set();
     document.getElementById('ventasLoading').classList.add('hidden');
     document.getElementById('ventasContent').classList.remove('hidden');
+    renderVentasEmisorChips();
     renderVentasChips();
     renderVentasSummary();
   };
@@ -922,6 +941,32 @@ function ventasMonthLabel(key){
   if (p.length !== 2) return key || '';
   const d = new Date(parseInt(p[0]), parseInt(p[1]) - 1, 1);
   return d.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' }).replace('.', '').toUpperCase();
+}
+
+function renderVentasEmisorChips(){
+  const emisores = Array.from(new Set(ventasData.map(v => v.emisor).filter(Boolean))).sort();
+  const cont = document.getElementById('ventasEmisorChips');
+  const allActive = ventasSelectedEmisores.size === 0;
+  let html = '<button class="chip ' + (allActive ? 'active' : '') + '" data-e="__ALL__">TODOS</button>';
+  html += emisores.map(em =>
+    '<button class="chip ' + (ventasSelectedEmisores.has(em) ? 'active' : '') + '" data-e="' +
+    em.replace(/"/g, '&quot;') + '">' + escapeHtml(em) + '</button>'
+  ).join('');
+  cont.innerHTML = html;
+  cont.querySelectorAll('.chip').forEach(c => {
+    c.onclick = () => {
+      const e = c.dataset.e;
+      if (e === '__ALL__') {
+        ventasSelectedEmisores = new Set();
+      } else {
+        if (ventasSelectedEmisores.has(e)) ventasSelectedEmisores.delete(e);
+        else ventasSelectedEmisores.add(e);
+      }
+      renderVentasEmisorChips();
+      renderVentasSummary();
+      renderVentasSearch();
+    };
+  });
 }
 
 function renderVentasChips(){
@@ -945,13 +990,20 @@ function renderVentasChips(){
       }
       renderVentasChips();
       renderVentasSummary();
+      renderVentasSearch();
     };
   });
 }
 
 function ventasFilteredList(){
-  if (ventasSelectedMonths.size === 0) return ventasData;
-  return ventasData.filter(v => ventasSelectedMonths.has(v.fechaEmisionKey));
+  let list = ventasData;
+  if (ventasSelectedMonths.size > 0) {
+    list = list.filter(v => ventasSelectedMonths.has(v.fechaEmisionKey));
+  }
+  if (ventasSelectedEmisores.size > 0) {
+    list = list.filter(v => ventasSelectedEmisores.has(v.emisor));
+  }
+  return list;
 }
 
 function ventasMonthsLabel(){
@@ -963,9 +1015,43 @@ function renderVentasSummary(){
   const list = ventasFilteredList();
   const totalPagado = list.filter(v => v.estado === 'PAGADA').reduce((s, v) => s + (v.valor || 0), 0);
   const totalPendiente = list.filter(v => v.estado === 'PENDIENTE').reduce((s, v) => s + (v.valor || 0), 0);
+  document.getElementById('ventasEmitidasTotal').textContent = fmt(totalPagado + totalPendiente);
   document.getElementById('ventasPagadoTotal').textContent = fmt(totalPagado);
   document.getElementById('ventasPendienteTotal').textContent = fmt(totalPendiente);
   renderVentasChart(list);
+  renderVentasSearch();
+}
+
+function renderVentasSearch(){
+  const input = document.getElementById('ventasSearchInput');
+  const q = input ? input.value.trim().toUpperCase() : '';
+  const cont = document.getElementById('ventasSearchResults');
+  if (!cont) return;
+  if (!q) { cont.innerHTML = ''; return; }
+  const list = ventasFilteredList().filter(v => (v.cliente || '').toUpperCase().includes(q));
+  if (list.length === 0) {
+    cont.innerHTML = '<div class="empty" style="padding:20px 0">Sin resultados</div>';
+    return;
+  }
+  const byClient = {};
+  list.forEach(v => {
+    const c = v.cliente || 'SIN CLIENTE';
+    if (!byClient[c]) byClient[c] = { total: 0, count: 0, pendiente: 0 };
+    byClient[c].total += (v.valor || 0);
+    byClient[c].count += 1;
+    if (v.estado === 'PENDIENTE') byClient[c].pendiente += (v.valor || 0);
+  });
+  const entries = Object.entries(byClient).sort((a, b) => b[1].total - a[1].total);
+  cont.innerHTML = entries.map(([name, d]) =>
+    '<button type="button" class="client-row" onclick="openVentasClienteDetail(\'' +
+      name.replace(/'/g, "\\'") + '\')">' +
+      '<div><div class="name">' + escapeHtml(name) + '</div>' +
+      '<div class="count">' + d.count + ' boleta' + (d.count === 1 ? '' : 's') +
+      (d.pendiente > 0 ? ' · <span style="color:var(--red)">pendiente ' + fmt(d.pendiente) + '</span>' : '') +
+      '</div></div>' +
+      '<div class="amt">' + fmt(d.total) + '</div>' +
+    '</button>'
+  ).join('');
 }
 
 function renderVentasChart(list){
@@ -1058,8 +1144,11 @@ function renderVentasList(list, title){
 }
 
 function openVentasDetail(estado){
-  const list = ventasFilteredList().filter(v => v.estado === estado);
-  const title = (estado === 'PAGADA' ? 'Pagadas' : 'Pendientes') + ' · ' + ventasMonthsLabel();
+  const list = estado === 'TODAS'
+    ? ventasFilteredList()
+    : ventasFilteredList().filter(v => v.estado === estado);
+  const label = estado === 'TODAS' ? 'Emitidas' : (estado === 'PAGADA' ? 'Pagadas' : 'Pendientes');
+  const title = label + ' · ' + ventasMonthsLabel();
   renderVentasList(list, title);
   openSubScreen('detailScreen', 'ventas');
 }
